@@ -1396,7 +1396,13 @@ footer {
                 Food
             </label>
 
-            <select id="foodSelect">
+            <div style="margin:14px 0 8px;">
+      <label for="foodSearch" style="font-weight:700;">🔎 Search Food</label>
+      <input id="foodSearch" type="search" placeholder="Type chicken, rice, banana..." autocomplete="off"
+        style="width:100%;box-sizing:border-box;margin-top:7px;padding:11px 13px;border:1px solid #d7dbe7;border-radius:10px;">
+      <div id="foodSearchStatus" style="font-size:12px;opacity:.7;margin-top:5px;"></div>
+    </div>
+    <select id="foodSelect">
 
             </select>
 
@@ -3210,6 +3216,150 @@ window.addWorkout=function(){const duration=Number(document.getElementById('dura
 window.clearWeeklyData=function(){const r=originalClearWeeklyData.apply(this,arguments);scheduleCloudSave();return r;};
 calorieQSupabase.auth.onAuthStateChange(async(_event,session)=>{if(session&&session.user){showLoggedInUI(session.user);await loadCalorieQFromCloud();}else showLoggedOutUI();});
 (async()=>{try{const {data:{session}}=await calorieQSupabase.auth.getSession();if(session&&session.user){showLoggedInUI(session.user);await loadCalorieQFromCloud();}else showLoggedOutUI();}catch(e){console.error(e);setAuthMessage('Could not connect to CalorieQ cloud storage.',true);}})();
+</script>
+
+
+<script>
+/* CalorieQ searchable food database enhancement */
+document.addEventListener('DOMContentLoaded', () => {
+  const search = document.getElementById('foodSearch');
+  const select = document.getElementById('foodSelect');
+  const status = document.getElementById('foodSearchStatus');
+  if (!search || !select) return;
+
+  const originalOptions = () => Array.from(select.options).map(o => ({
+    value: o.value, text: o.textContent
+  }));
+
+  const filterLocalOptions = (term) => {
+    const q = term.trim().toLowerCase();
+    const opts = originalOptions();
+    const filtered = q ? opts.filter(o => o.text.toLowerCase().includes(q)) : opts;
+    select.innerHTML = '';
+    filtered.forEach(o => {
+      const option = document.createElement('option');
+      option.value = o.value;
+      option.textContent = o.text;
+      select.appendChild(option);
+    });
+    status.textContent = q
+      ? `${filtered.length} matching food${filtered.length === 1 ? '' : 's'}`
+      : `${opts.length} foods available`;
+  };
+
+  // If the page's existing loader populates the select from Supabase,
+  // observe it and make the resulting live database list searchable.
+  const observer = new MutationObserver(() => filterLocalOptions(search.value));
+  observer.observe(select, {childList:true});
+
+  search.addEventListener('input', () => filterLocalOptions(search.value));
+  filterLocalOptions('');
+});
+</script>
+
+
+<script>
+/* CalorieQ BMR / TDEE / Goal Target Calculator */
+(function () {
+  function calcCalorieQPlan() {
+    const height = parseFloat(document.getElementById('height')?.value);
+    const weight = parseFloat(document.getElementById('weight')?.value);
+    const age = parseFloat(document.getElementById('age')?.value);
+
+    // Support either common naming convention for sex/gender and activity/goal controls.
+    const sexEl = document.getElementById('sex') || document.getElementById('gender');
+    const activityEl = document.getElementById('activity') || document.getElementById('activityLevel');
+    const goalEl = document.getElementById('goal') || document.getElementById('fitnessGoal');
+
+    if (!height || !weight || !age || !sexEl || !activityEl || !goalEl) return null;
+
+    const sex = String(sexEl.value).toLowerCase();
+    const activity = String(activityEl.value).toLowerCase();
+    const goal = String(goalEl.value).toLowerCase();
+
+    // Mifflin-St Jeor equation.
+    let bmr = (10 * weight) + (6.25 * height) - (5 * age);
+    if (sex.includes('male') || sex === 'm') bmr += 5;
+    else if (sex.includes('female') || sex === 'f') bmr -= 161;
+    else return null;
+
+    const activityFactors = {
+      sedentary: 1.2,
+      'lightly active': 1.375,
+      light: 1.375,
+      'moderately active': 1.55,
+      moderate: 1.55,
+      'very active': 1.725,
+      'extra active': 1.9,
+      'extremely active': 1.9
+    };
+
+    let factor = activityFactors[activity];
+    if (!factor) {
+      if (activity.includes('sedentary')) factor = 1.2;
+      else if (activity.includes('light')) factor = 1.375;
+      else if (activity.includes('moderate')) factor = 1.55;
+      else if (activity.includes('very')) factor = 1.725;
+      else if (activity.includes('extra') || activity.includes('extreme')) factor = 1.9;
+      else factor = 1.2;
+    }
+
+    const tdee = bmr * factor;
+
+    let adjustment = 0;
+    if (goal.includes('lose') || goal.includes('loss') || goal.includes('weight loss')) {
+      adjustment = -500;
+    } else if (goal.includes('gain') || goal.includes('muscle')) {
+      adjustment = 300;
+    }
+
+    // Keep target within a sensible floor rather than allowing an extreme target.
+    const target = Math.max(1200, Math.round(tdee + adjustment));
+
+    const bmi = weight / Math.pow(height / 100, 2);
+
+    return {
+      bmi: Number(bmi.toFixed(1)),
+      bmr: Math.round(bmr),
+      tdee: Math.round(tdee),
+      target
+    };
+  }
+
+  // Expose for the existing app if it wants to call it.
+  window.calculateCalorieQPlan = calcCalorieQPlan;
+
+  // Add a clear explanation panel near the profile/plan area.
+  document.addEventListener('DOMContentLoaded', function () {
+    const form = document.querySelector('form');
+    const targetInputs = ['height','weight','age','sex','gender','activity','activityLevel','goal','fitnessGoal']
+      .map(id => document.getElementById(id)).filter(Boolean);
+
+    if (!targetInputs.length) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'calorieQPlanExplanation';
+    panel.style.cssText = 'margin-top:14px;padding:14px;border-radius:14px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.18);font-size:13px;';
+    panel.innerHTML = '<strong>CalorieQ calculation</strong><br>Enter your profile details to calculate BMI, BMR, TDEE and your goal-based daily calorie target.';
+
+    const anchor = targetInputs[targetInputs.length - 1];
+    anchor.closest('form')?.appendChild(panel);
+
+    function refresh() {
+      const p = calcCalorieQPlan();
+      if (!p) return;
+      panel.innerHTML =
+        '<strong>CalorieQ Daily Target</strong><br>' +
+        'BMI: <b>' + p.bmi + '</b> &nbsp; | &nbsp; ' +
+        'BMR: <b>' + p.bmr + ' kcal/day</b> &nbsp; | &nbsp; ' +
+        'TDEE: <b>' + p.tdee + ' kcal/day</b><br>' +
+        'Goal-adjusted Daily Target: <b>' + p.target + ' kcal/day</b>';
+    }
+
+    targetInputs.forEach(el => el.addEventListener('input', refresh));
+    targetInputs.forEach(el => el.addEventListener('change', refresh));
+  });
+})();
 </script>
 
 </body>
